@@ -746,9 +746,9 @@ def analyze_script(threshold_setting):
         # ______________________________________________________________________________________ANALYZE PARTICLES
         #***************************************************************************************
             
-        # Filter any tifs that are not a single image by setting the file size.
-        file_stats = os.stat(tif_file)
-        #print(file_stats.st_size)
+        # # Filter any tifs that are not a single image by setting the file size.
+        # file_stats = os.stat(tif_file)
+        # print(file_stats.st_size)
         if check_if_stack(imp, tif_file):
             print(tif_filename_w_ext + " is a stack, skipping...")
             error_list.append(tif_file, "Reason: tif_file is a stack and was skipped")
@@ -819,37 +819,6 @@ def analyze_script(threshold_setting):
 
 
 
-"""
-make a list dropdown-style UI
-
-Dialog 1
-    message: choose the order in which you would like to perform your analysis. each option may only be selected once.
-
-    First action: organize files/auto-threshold/analyze particles/merge csvs/none
-    Second action: organize files/auto-threshold/analyze particles/merge csvs/none
-    Third action: organize files/auto-threshold/analyze particles/merge csvs/none
-    Fourth action: organize files/auto-threshold/analyze particles/merge csvs/none
-
-Dialog 2
-    message: choose the directory the tif files will be processed from:
-
-*Script runs as ordered*
-
-1. import all the images
-2. filter to see if all are stacks (must be done despite each process) using check_if_stack()
-3. pass on filtered files to the first choice function
-4. pass on processed files to the second choice function
-5. pass on processed files to the third choice function
-
-
-"""
-
-
-
-
-
-
-
 
 
 
@@ -883,6 +852,14 @@ else:
 
 # ______________________________________________________________________________________RUN MERGE SCRIPT EXTERNALLY
 #***************************************************************************************
+
+if merge_mode == "3":
+    print("User chose Don't merge, exiting script")
+    exit()
+elif merge_mode == "0":
+    print("Continuing with horizontal CSV merge")
+elif merge_mode == "1":
+    print("Continuing with vertical CSV merge")
 
 script_path = get_script_path()
 

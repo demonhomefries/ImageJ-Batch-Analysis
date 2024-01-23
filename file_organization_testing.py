@@ -73,8 +73,8 @@ def get_particle_analysis_settings():
     gd.addStringField("Pixel^2 size minimum", "30")
     gd.addStringField("Pixel^2 size maximum:", "Infinity")
     gd.addCheckbox("Include holes", False)
-    merge_options = ["Horizontal merge", "Vertical merge (Spotfire)"]
-    gd.addChoice("Merge mode", merge_options, merge_options[0])
+    merge_options = ["Don't merge", "Horizontal merge", "Vertical merge (Spotfire)"]
+    gd.addChoice("Merge mode", merge_options, merge_options[2])
     gd.showDialog()
     include_holes_checked = gd.getNextBoolean()
     merge_mode = gd.getNextChoice()
@@ -94,6 +94,8 @@ def get_particle_analysis_settings():
         merge_mode = "0"
     elif merge_mode == "Vertical merge (Spotfire)":
         merge_mode = "1"
+    elif merge_mode == "Don't merge":
+        merge_mode = "2"
 
     return size_min, size_max, include_holes_checked, merge_mode
 
@@ -296,25 +298,25 @@ def get_analysis_workflow():
 
     while True:
         gd = GenericDialog("Set up analysis workflow")
+        gd.addCheckboxGroup(5,5,["1","2","3","4","5"])
         # Organization
+        gd.addMessage("""Organize your tif files into folders for each well ID in 96w or 384w formats before\nrunning an analysis. Saved thresholded files or analysis CSVs will be saved into the\norganized folder.The resulting folder will be in the same directory as the input folder\nwith an \'_auto-organized\' suffix.""")
         gd.addCheckbox("Organize tif files", True)
         gd.addButton("Organization Settings", orgListener)
         gd.addMessage("")
         # Thresholding
+        gd.addMessage("""Use auto-thresholding to threshold images before running Analyze Particles. This step\ncan be skipped if the images have already been thresholded.""")
         gd.addCheckbox("Auto-threshold", True)
-        #gd.addCheckbox("Save thresholded files", False)
         gd.addButton("Auto-thresholding Settings", threshListener)
         gd.addMessage("")
-        # Analyze Particles
+        # Analyze Particles and Merge CSVs
+        gd.addMessage
         gd.addCheckbox("Analyze particles & generate CSVs", True)
-        gd.addButton("Analysis Settings", analysisListener)
-        gd.addMessage("")
-        # Merge CSVs
         gd.addCheckbox("Merge CSVs", True)
+        gd.addButton("Analysis and Merge Settings", analysisListener)
         gd.addMessage("")
-
         # Directory Input
-        gd.addDirectoryField("Directory: ", "", 30)
+        gd.addDirectoryField("Directory: ", "", 60)
 
         gd.showDialog()
 
@@ -342,11 +344,11 @@ def get_analysis_workflow():
         if threshold_yn2 and threshListener.thresholding_settings is None:
             warning_dialog("Auto-thresholding has been selected but thresholding settings have not been chosen.")
             continue
-
+            
         if analyze_particles_yn3 and analysisListener.analysis_settings is None:
             warning_dialog("Analyze particles has been selected but analysis settings have not been chosen.")
             continue
-        
+
         # cannot have any option sequence with a space in the middle (i.e. True False True True)
         """
         organize and analyze
