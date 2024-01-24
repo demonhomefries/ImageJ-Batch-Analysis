@@ -1,9 +1,14 @@
-from ij import IJ
-from ij.gui import GenericDialog
-import time
 import os
-from ij.io import DirectoryChooser
+import time
+import Queue
+import shutil
+import subprocess
+import threading
+from ij import IJ
+from ij.io import OpenDialog
+from ij.gui import GenericDialog
 from java.awt.event import ActionListener
+
 
 # def get_time_elapsed(start_time, process):
 #     current_time = time.time()
@@ -62,7 +67,7 @@ def validate_and_correct_order(steps):
 
     return sorted_steps
 
-def get_particle_analysis_settings():
+def get_particle_analysis_settings(size_min, size_max, include_holes_checked, merge_mode):
     # Set parameter for pixel^2 size.
     # Get these into the same dialog box
     # size_min = IJ.getString("pixel^2 size minimum: ", "30")
@@ -70,54 +75,55 @@ def get_particle_analysis_settings():
 
     # Get the minimum and maximum particle analysis parameters
     gd = GenericDialog("Enter particle min/max sizes")
-    gd.addStringField("Pixel^2 size minimum", "30")
-    gd.addStringField("Pixel^2 size maximum:", "Infinity")
-    gd.addCheckbox("Include holes", False)
-    merge_options = ["Don't merge", "Horizontal merge", "Vertical merge (Spotfire)"]
+    gd.addStringField("Pixel^2 size minimum", size_min)
+    gd.addStringField("Pixel^2 size maximum:", size_max)
+    gd.addCheckbox("Include holes", include_holes_checked)
+    merge_options = ["Don't merge", "Horizontal merge", merge_mode]
     gd.addChoice("Merge mode", merge_options, merge_options[2])
+    gd.addMessage("Click OK to save settings, or Cancel to restore to defaults and exit.")
     gd.showDialog()
     include_holes_checked = gd.getNextBoolean()
     merge_mode = gd.getNextChoice()
     size_min = gd.getNextString()
     size_max = gd.getNextString()
 
-    if gd.wasCanceled():
-        print("get_particle_analysis_settings: CANCELLED ")
-        return "cancelled"
-
     # print("\nChosen Settings: \nsize_min: " + size_min 
     #       + " \nsize_max: " + size_max 
     #       + "\ninclude_holes: " + str(include_holes_checked) 
     #       + "\nMerge Mode: " + merge_mode)
 
-    if merge_mode == "Horizontal merge":
-        merge_mode = "0"
-    elif merge_mode == "Vertical merge (Spotfire)":
-        merge_mode = "1"
-    elif merge_mode == "Don't merge":
-        merge_mode = "2"
+    if gd.wasCanceled():
+        print("get_particle_analysis_settings was cancelled, restoring default values ")
+        return "30", "Infinity", False, "Vertical merge (Spotfire)"
 
     return size_min, size_max, include_holes_checked, merge_mode
 
-def get_thresholding_settings():
+class AnalysisSettingsListener(ActionListener):
+    def __init__(self):
+        size_min = "30"
+        size_max = "Infinity"
+        include_holes_checked = False
+        merge_mode = "Vertical merge (Spotfire)"
+        self.analysis_settings = size_min, size_max, include_holes_checked, merge_mode
+    def actionPerformed(self, event):
+        size_min, size_max, include_holes_checked, merge_mode = self.analysis_settings
+        self.analysis_settings = get_particle_analysis_settings(size_min, size_max, include_holes_checked, merge_mode)
 
-    # Set default values
-    dark_bg = False
-    stack_hist = False
-    rst_range = False
-
+def get_thresholding_settings(setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images):
+    setting = None
     # Initialize the dialog
     gd = GenericDialog("Threshold Settings")
 
     thresh_mode = ["Default", "Huang", "Intermodes", "IsoData", "IJ_IsoData", "Li", "MaxEntropy", "Mean", "MinError", "Minimum", "Moments", "Otsu", "Percentile", "RenyiEntropy", "Shanbhag", "Triangle", "Yen"]
-    gd.addChoice("Threshold Mode", thresh_mode, thresh_mode[0])
+    gd.addChoice("Threshold Mode", thresh_mode, threshold_mode)
 
     # clr_mode = ["Red", "B&W", "Over/Under"]
     # gd.addChoice("Color Mode", clr_mode, clr_mode[0])
-    gd.addCheckbox("Dark Background", False)
-    gd.addCheckbox("Stack Histogram", False)
-    gd.addCheckbox("Don't reset range", False)
-    gd.addCheckbox("Save thresholded images?", False)
+    gd.addCheckbox("Dark Background", dark_bg)
+    gd.addCheckbox("Stack Histogram", stack_hist)
+    gd.addCheckbox("Don't reset range", rst_range)
+    gd.addCheckbox("Save thresholded images?", save_thresholded_images)
+    gd.addMessage("Click OK to save settings, or Cancel to restore to defaults and exit.")
     gd.showDialog()
 
 
@@ -145,12 +151,26 @@ def get_thresholding_settings():
     # + "\n\tSave thresholded image: " + str(save_thresholded_images))
 
     if gd.wasCanceled():
-        print("get_thresholding_settings: CANCELLED ")
-        return "cancelled"
+        print("get_thresholding_settings was cancelled, restoring default values")
+        return None, "Default", False, False, False, False
     else:
-        return setting, save_thresholded_images, [threshold_mode, dark_bg, stack_hist, rst_range]
+        return setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images
+                                            
+class ThresholdingSettingsListener(ActionListener):
+    def __init__(self):
+        setting = None
+        threshold_mode = "Default"
+        dark_bg = False
+        stack_hist = False
+        rst_range = False
+        save_thresholded_images = False
+        self.thresholding_settings = setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images
 
-def get_organization_settings():
+    def actionPerformed(self, event):
+        setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images = self.thresholding_settings
+        self.thresholding_settings = get_thresholding_settings(setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images)
+
+def get_organization_settings(organize_mode, move_copy, string1, string2, generate_log):
 
     # Initialize the dialog
     gd = GenericDialog("Organize images?")
@@ -158,15 +178,16 @@ def get_organization_settings():
     gd.addMessage("Choose how images will be organized into folders before\nthe particle analysis script is run.")
 
     organize_choices = ["Don't Organize", "96-well", "384-well"]
-    gd.addChoice("Organization", organize_choices, organize_choices[2])
+    gd.addChoice("Organization", organize_choices, organize_mode)
 
     move_copy_choices = ["Move", "Copy"]
-    gd.addChoice("Move or Copy?", move_copy_choices, move_copy_choices[0])
+    gd.addChoice("Move or Copy?", move_copy_choices, move_copy)
 
     gd.addMessage("Input unique strings to differentiate groups of images.\nEach image containing the following string will be\nplaced into its respective folder.\n(Case Sensitive)")
-    gd.addStringField("String 1", "Confocal")
-    gd.addStringField("String 2", "BrightField")
-    gd.addCheckbox("Generate organization & error log", False)
+    gd.addStringField("String 1", string1)
+    gd.addStringField("String 2", string2)
+    gd.addCheckbox("Generate organization & error log", generate_log)
+    gd.addMessage("Click OK to save settings, or Cancel to restore to defaults and exit.")
     gd.showDialog()
 
     # Retrieve the values
@@ -182,21 +203,140 @@ def get_organization_settings():
     #          + "\n\tGenerate Log: " + str(generate_log))
     
     if gd.wasCanceled():
-        print("get_organization_settings: CANCELLED ")
-        return "cancelled"
+        print("get_organization_settings was cancelled, restoring default values")
+        return "384-well", "Move", "Confocal", "Brightfield", False
     else:
         return organize_mode, move_copy, string1, string2, generate_log
+    
+class OrganizationSettingsListener(ActionListener):
+    def __init__(self):
+        organize_mode = "384-well"
+        move_copy = "Move"
+        string1 = "Confocal"
+        string2 = "Brightfield"
+        generate_log = False
+        self.organization_settings = organize_mode, move_copy, string1, string2, generate_log
+
+    def actionPerformed(self, event):
+        organize_mode, move_copy, string1, string2, generate_log = self.organization_settings
+        self.organization_settings = get_organization_settings(organize_mode, move_copy, string1, string2, generate_log)
+
+def confirmation_dialog(step_list, organization_settings, thresholding_settings, analysis_settings, directory):
+
+    step_list_string, organization_settings_string, thresholding_settings_string, analysis_settings_string, directory_string = get_settings_strings(step_list, organization_settings, thresholding_settings, analysis_settings, directory, print_settings=True)
+
+    confirm_dialog = GenericDialog("Confirm settings")
+    confirm_dialog.addMessage(step_list_string)
+    confirm_dialog.addMessage(organization_settings_string)
+    confirm_dialog.addMessage(thresholding_settings_string)
+    confirm_dialog.addMessage(analysis_settings_string)
+    confirm_dialog.addMessage(directory_string)
+    confirm_dialog.addMessage("\n\nIf the settings above are correct, click OK to continue.\nTo revise these settings, click Cancel.")
+    confirm_dialog.showDialog()
+
+    if confirm_dialog.wasCanceled():
+        return("cancelled")
+    elif confirm_dialog.wasOKed():
+        return("ok")
+
+def warning_dialog(message):
+    warning_dialog = GenericDialog("Warning")
+    warning_dialog.addMessage(message)
+    warning_dialog.showDialog()
+
+def get_analysis_workflow():
+    # Instantiate the listeners
+    orgListener = OrganizationSettingsListener()
+    threshListener = ThresholdingSettingsListener()
+    analysisListener = AnalysisSettingsListener()
+    directory = None
+    tif_organization_yn1 = False
+    threshold_yn2 = False
+    analyze_particles_yn3 = False
+    while True:
+        gd = GenericDialog("Set up analysis workflow")
+        # Organization
+        gd.addCheckboxGroup(0,1,[], [], ["1. ORGANIZE"])
+        gd.addMessage("""Organize your tif files into folders for each well ID in 96w or 384w formats before\nrunning an analysis. Saved thresholded files or analysis CSVs will be saved into the\norganized folder. The resulting folder will be in the same directory as the input folder\nwith an \'_auto-organized\' suffix.""")
+        gd.addCheckbox("Organize tif files", tif_organization_yn1)
+        gd.addButton("Organization Settings", orgListener)
+        #gd.addMessage("")
+        # Thresholding
+        gd.addCheckboxGroup(0,1,[], [], ["2. THRESHOLD"])
+        gd.addMessage("""Use auto-thresholding to threshold images before running Analyze Particles. This step\ncan be skipped if the images have already been thresholded. Thresholded images can\nalso be saved to the source folder for later use and will have an \'_auto-thresholded\' suffix.""")
+        gd.addCheckbox("Auto-threshold", threshold_yn2)
+        gd.addButton("Auto-thresholding Settings", threshListener)
+        #gd.addMessage("")
+        # Analyze Particles and Merge CSVs
+        gd.addCheckboxGroup(0,1,[], [], ["3. ANALYZE"])
+        gd.addMessage("""Analyze particles will run through each thresholded tif file in your source directory\nand identify the particles based on the input size parameters.The data will be saved\nto individual files before they can be merged horizontally or vertically.""")
+        gd.addCheckbox("Analyze particles & generate CSVs", analyze_particles_yn3)
+        gd.addButton("Analysis and Merge Settings", analysisListener)
+        gd.addMessage("")
+        # Directory Input
+        gd.addDirectoryField("Directory: ", directory, 50)
+
+        gd.showDialog()
+        tif_organization_yn1 = gd.getNextBoolean()
+        threshold_yn2 = gd.getNextBoolean()
+        analyze_particles_yn3 = gd.getNextBoolean()
+        directory = gd.getNextString()
+
+        step_list = [tif_organization_yn1, threshold_yn2, analyze_particles_yn3]
+
+        # ERROR CONDITIONS:
+        if gd.wasCanceled():
+            print("get_analysis_workflow: CANCELLED")
+            return "cancelled"
+        
+        if directory == "" or directory is None:
+            warning_dialog("The directory has not been set. Please select a valid directory.")
+            continue
+
+        if tif_organization_yn1 and orgListener.organization_settings is None:
+            warning_dialog("Tif organization has been selected but organization settings have not been chosen.")
+            continue
+
+        if threshold_yn2 and threshListener.thresholding_settings is None:
+            warning_dialog("Auto-thresholding has been selected but thresholding settings have not been chosen.")
+            continue
+            
+        if analyze_particles_yn3 and analysisListener.analysis_settings is None:
+            warning_dialog("Analyze particles has been selected but analysis settings have not been chosen.")
+            continue
+
+        if tif_organization_yn1 is True and threshold_yn2 is False and analyze_particles_yn3 is True:
+            warning_dialog("Workflow cannot go from organization to analyze particles without auto-thresholding")
+            continue
+
+        if tif_organization_yn1 is False and threshold_yn2 is False and analyze_particles_yn3 is False:
+            warning_dialog("No workflow option checkboxes have been selected. Click 'Cancel' to exit the program.")
+            continue
+
+
+
+        confirmation = confirmation_dialog(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory)
+        if confirmation == "ok":
+            get_settings_strings(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory, print_settings=False)
+            return step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory
+
+
 
 
 def get_settings_strings(step_list, organization_settings, thresholding_settings, analysis_settings, directory, print_settings):
+    print("DEBUGGING step_list: " + str(step_list))
+    print("DEBUGGING organization_settings: " + str(thresholding_settings))
+    print("DEBUGGING analysis_settings: " + str(analysis_settings))
+    print("DEBUGGING thresholding_settings: " + str(analysis_settings))
+    print("DEBUGGING directory: " + str(directory))
+    print("DEBUGGING print_settings: " + str(print_settings))
 
     if step_list is not None:
-        [tif_organization_yn1, threshold_yn2, analyze_particles_yn3, csv_merge_yn4] = step_list
+        [tif_organization_yn1, threshold_yn2, analyze_particles_yn3] = step_list
         step_list_string = ("User Selected Workflow:"
             + "\n       Organize tif files?: " + str(tif_organization_yn1) 
             + "\n       Auto-threshold?: " + str(threshold_yn2)
-            + "\n       Analyze Particles?: " + str(analyze_particles_yn3)
-            + "\n       Merge CSVs?: " + str(csv_merge_yn4))
+            + "\n       Analyze Particles?: " + str(analyze_particles_yn3))
 
     if organization_settings is not None:
         organize_mode, move_copy, string1, string2, generate_log = organization_settings
@@ -220,8 +360,8 @@ def get_settings_strings(step_list, organization_settings, thresholding_settings
                         + "\n       Command: " + str(setting))
     else:
         thresholding_settings_string = ("Auto-threshold Settings: None")
-    
-    if analysis_settings is not None:
+
+    if analysis_settings != None:
         size_min, size_max, include_holes_checked, merge_mode = analysis_settings
         analysis_settings_string = ("Analyze Particles Settings:"
                         + "\n       Minimum Size: " + size_min 
@@ -246,146 +386,92 @@ def get_settings_strings(step_list, organization_settings, thresholding_settings
     return step_list_string, organization_settings_string, thresholding_settings_string, analysis_settings_string, directory_string
 
 
-class OrganizationSettingsListener(ActionListener):
-    def __init__(self):
-        self.organization_settings = None
-    def actionPerformed(self, event):
-        self.organization_settings = get_organization_settings()
-
-class ThresholdingSettingsListener(ActionListener):
-    def __init__(self):
-        self.thresholding_settings = None
-    def actionPerformed(self, event):
-        self.thresholding_settings = get_thresholding_settings()
-
-class AnalysisSettingsListener(ActionListener):
-    def __init__(self):
-        self.analysis_settings = None
-    def actionPerformed(self, event):
-        self.analysis_settings = get_particle_analysis_settings()
-
-def confirmation_dialog(step_list, organization_settings, thresholding_settings, analysis_settings, directory):
-
-    step_list_string, organization_settings_string, thresholding_settings_string, analysis_settings_string, directory_string = get_settings_strings(step_list, organization_settings, thresholding_settings, analysis_settings, directory, print_settings=True)
-
-    confirm_dialog = GenericDialog("Confirm settings")
-    confirm_dialog.addMessage(step_list_string)
-    confirm_dialog.addMessage(organization_settings_string)
-    confirm_dialog.addMessage(thresholding_settings_string)
-    confirm_dialog.addMessage(analysis_settings_string)
-    confirm_dialog.addMessage(directory_string)
-    confirm_dialog.addMessage("\n\nIf the settings above are correct, click OK to continue.\nTo revise these settings, click Cancel.")
-    confirm_dialog.showDialog()
-
-    if confirm_dialog.wasCanceled():
-        return("cancelled")
-    elif confirm_dialog.wasOKed():
-        return("ok")
-    # If user OKs the dialog, return true to the get_analysis_workflow dialog and pass on the variables to the initial function call
-    # If user cancels the dialog, go back to the get_analysis_workflow dialog with the currently chosen settings
-
-def warning_dialog(message):
-    warning_dialog = GenericDialog("Warning")
-    warning_dialog.addMessage(message)
-    warning_dialog.showDialog()
-
-
-def get_analysis_workflow():
-    # Instantiate the listeners
-    orgListener = OrganizationSettingsListener()
-    threshListener = ThresholdingSettingsListener()
-    analysisListener = AnalysisSettingsListener()
-
-    while True:
-        gd = GenericDialog("Set up analysis workflow")
-        gd.addCheckboxGroup(5,5,["1","2","3","4","5"])
-        # Organization
-        gd.addMessage("""Organize your tif files into folders for each well ID in 96w or 384w formats before\nrunning an analysis. Saved thresholded files or analysis CSVs will be saved into the\norganized folder.The resulting folder will be in the same directory as the input folder\nwith an \'_auto-organized\' suffix.""")
-        gd.addCheckbox("Organize tif files", True)
-        gd.addButton("Organization Settings", orgListener)
-        gd.addMessage("")
-        # Thresholding
-        gd.addMessage("""Use auto-thresholding to threshold images before running Analyze Particles. This step\ncan be skipped if the images have already been thresholded.""")
-        gd.addCheckbox("Auto-threshold", True)
-        gd.addButton("Auto-thresholding Settings", threshListener)
-        gd.addMessage("")
-        # Analyze Particles and Merge CSVs
-        gd.addMessage
-        gd.addCheckbox("Analyze particles & generate CSVs", True)
-        gd.addCheckbox("Merge CSVs", True)
-        gd.addButton("Analysis and Merge Settings", analysisListener)
-        gd.addMessage("")
-        # Directory Input
-        gd.addDirectoryField("Directory: ", "", 60)
-
-        gd.showDialog()
-
-        tif_organization_yn1 = gd.getNextBoolean()
-        threshold_yn2 = gd.getNextBoolean()
-        analyze_particles_yn3 = gd.getNextBoolean()
-        csv_merge_yn4 = gd.getNextBoolean()
-        directory = gd.getNextString()
-
-        step_list = [tif_organization_yn1, threshold_yn2, analyze_particles_yn3, csv_merge_yn4]
-
-        # ERROR CONDITIONS:
-        if gd.wasCanceled():
-            print("get_analysis_workflow: CANCELLED")
-            return "cancelled"
-        
-        if directory == "" or directory.strip() is None:
-            warning_dialog("The directory has not been set. Please select a valid directory.")
-            continue
-
-        if tif_organization_yn1 and orgListener.organization_settings is None:
-            warning_dialog("Tif organization has been selected but organization settings have not been chosen.")
-            continue
-
-        if threshold_yn2 and threshListener.thresholding_settings is None:
-            warning_dialog("Auto-thresholding has been selected but thresholding settings have not been chosen.")
-            continue
-            
-        if analyze_particles_yn3 and analysisListener.analysis_settings is None:
-            warning_dialog("Analyze particles has been selected but analysis settings have not been chosen.")
-            continue
-
-        # cannot have any option sequence with a space in the middle (i.e. True False True True)
-        """
-        organize and analyze
-        threshold and merge 
-        organize and merge
-        organize, threshold, and merge (without analyze)
-        organize, analyse, merge (warning needed if skipping threshold)
-
-        """
-        #cannot have analyze particles and generate CSVs alone unless all of the files are already thresholded (make a separate warning dialog for these)
-        #
-
-        confirmation = confirmation_dialog(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory)
-        if confirmation == "ok":
-            get_settings_strings(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory, print_settings=True)
-            return step_list, directory, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings
-
-
-
-
-
-
-
-
 
 
 
 full_workflow_settings = get_analysis_workflow()
+exit()
+
+
 
 # Print out the settings
 if full_workflow_settings != "cancelled":
     step_list, directory, organization_settings, thresholding_settings, analysis_settings = full_workflow_settings
-    step_list_string, organization_settings_string, thresholding_settings_string, analysis_settings_string, directory_string = get_settings_strings()
+    step_list_string, organization_settings_string, thresholding_settings_string, analysis_settings_string, directory_string = get_settings_strings(step_list, organization_settings, thresholding_settings, analysis_settings, directory, print_settings=True)
     print(step_list_string)
     print(organization_settings_string)
     print(thresholding_settings_string)
     print(analysis_settings_string)
     print(directory_string)
 
+print("ORGANIZATION:")
+print(str(organization_settings_string))
+print("THRESHOLDING:")
+print(str(thresholding_settings_string))
+print("ANALYSIS:")
+print(str(analysis_settings_string))
 
+
+# def organize_script(organize_mode, move_copy, string1, string2, generate_log):
+#         # ______________________________________________________________________________________FILE ORGANIZATION
+#     #***************************************************************************************
+    
+#     # Make empty filelist so that it can be assigned if files are organized
+#     # Filelist will otherwise default to the tif files in the user-selected directory (dir)
+#     organized_tif_filelist = []
+
+#     # Get the organization settings from user
+#     result = get_organization_settings()
+#     if result == "cancelled":
+#         print("User cancelled get_organization_settings, exiting...")
+#         exit()
+#     else:
+#         organize_mode, move_copy, string1, string2, generate_log = result
+
+
+#     # Get the directory containing all the tif files from user
+#     dir = IJ.getDirectory("ORGANIZE FILES: Select a directory containing .tif files to organize")
+#     if dir == None:
+#         print("User cancelled getDirectory, exiting...")
+#         exit()
+
+
+#     if organize_mode != "Don't Organize":
+#         # Organize the files and return the list of errors
+#         moved_copied_files, errored_files = organize_files(organize_mode, move_copy, string1, string2, dir)
+
+#         # Print out all the files that have been moved/copied
+#         for source, dest in moved_copied_files:
+#             print("Source: " + source + ", Destination: " + str(dest))
+#         print(len(moved_copied_files))
+
+#         # Print out all the files that have met error conditions
+#         for file, reason in errored_files:
+#             print("Source: " + file + ", " + reason)
+#         print(len(errored_files))
+
+#         # Return the list of files to iterate through if the files have been organized
+#         organized_tif_filelist = [dest for source, dest in moved_copied_files]
+
+#         if generate_log is True:
+#             log_fp = os.path.join(os.path.dirname(os.getcwd()), "organization_log.txt")
+#             print("Generated log file: " + log_fp)
+
+#             with open(log_fp, "w") as log:
+#                 log.write("******FILES " + move_copy.upper() + "******\n")
+#                 for source, dest in moved_copied_files:
+#                     log.write(str(source) + " to " + str(dest) + "\n")
+
+#                 log.write("\n\n******ERRORS******\n")
+#                 for file, reason in errored_files:
+#                     log.write(str(file) + " errored, " + str(reason) + "\n")
+
+
+#     if len(organized_tif_filelist) > 0:
+#         # Get the organized list of tif files
+#         filelist = organized_tif_filelist
+#     else:
+#         # Get the list of tif files to iterate through
+#         filelist = (find_tif_files(dir))
+    
+#     return filelist
