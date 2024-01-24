@@ -8,6 +8,7 @@ Batch processing script to organize and analyze images from a cell plate imager 
     - User-chosen settings
     - File transactions (source, destination) filepaths if moved or copied
     - Errors encountered during the run
+- Auto-thresholding is a multi-threaded operation and will run by default using the half of the available thread count.
 
 # Dependencies:
  - Pandas (will be installed upon running CSV_merger.py for the first time if not already present). This script was tested using Pandas 2.1.2
