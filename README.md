@@ -14,10 +14,10 @@ Batch processing script to organize and analyze images from a cell plate imager 
  - Pandas (will be installed upon running CSV_merger.py for the first time if not already present). This script was tested using Pandas 2.1.2
 
 # Installation:
-Clone or download this repository. That's it.
-Use Pip to install Pandas (optional, see Notes above)
+Clone or download this repository. That's it.<br />
+Use Pip to install Pandas (optional, see Notes above)<br />
 
 # Usage:
-Open or drag Cell_plate_image_analysis.py into the Fiji ImageJ window and click Run.
-The main settings UI dialog will appear and guide you through the settings and
-Please test the settings individually for an understanding of their purpose before using this tool.
+Open or drag Cell_plate_image_analysis.py into the Fiji ImageJ window and click Run.<br />
+The main settings UI will appear and guide you through the settings and inputs.<br />
+Please test the settings individually for an understanding of their purpose before using this tool.<br />
