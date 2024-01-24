@@ -2,15 +2,116 @@ import os
 import time
 import Queue
 import shutil
-import subprocess
+import datetime
 import threading
+import subprocess
 from ij import IJ
 from ij.io import OpenDialog
 from ij.gui import GenericDialog
 from java.awt.event import ActionListener
 
-# ______________________________________________________________________________________USER INTERFACE FUNCTIONS
-#***************************************************************************************
+# ___________________________________________________________________________________________________________SUPPLEMENTARY FUNCTIONS AND CLASSES
+#*************************************************************************************************************
+
+class customError(Exception):
+    pass
+
+class RunLog:
+    def __init__(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Get current date and time
+        current_datetime = datetime.datetime.now()
+        #date_str = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
+        date_str = current_datetime.strftime("%d%b%Y_%H%M").upper()
+        # File name
+        file_name = "ImageJ_Analysis_RUNLOG_on_" + date_str + ".txt"
+        self.run_log_fp = os.path.join(script_dir, file_name)
+
+    def append(self, log_string):
+        # Append log string to the file
+        with open(self.run_log_fp, 'a') as file:
+            file.write(log_string + '\n')
+
+def add_path_backslash(directory):
+    # This function just adds a backslash because apparently os.path.join doesn't add strings as new folders, just concatenates them into the basename/basedir.
+    if not directory.endswith("\\"):
+        directory = directory + "\\"
+    return directory
+
+def extract_well_id(filename):
+
+    # Split the filename using underscore as a delimiter (this naming convention should not change from the Gen5 output)
+    parts = filename.split('_')
+    
+    # Well ID is identified as a len >= 2 string where the first character is a number and subsequent characters are digits
+    for part in parts:
+        if len(part) >= 2 and part[0].isalpha() and part[1:].isdigit():
+            return part
+    
+    # If well_id is not found, return None to be processed as an error
+    return None
+
+def find_tif_files(directory):
+    tif_files = []
+
+    for root, dirs, files in os.walk(directory):
+        for filename in files:
+            if filename.endswith('.tif'):
+                tif_files.append(os.path.join(root, filename))
+
+    return tif_files
+
+def get_wellID_list(type):
+    """
+    type: "384-well" or "96-well"
+    
+    """
+
+    output_list = []
+
+    if type == "96-well":
+        for letter in "ABCDEFGH":
+            for number in range(1, 13):
+                output_list.append(letter + str(number))
+    elif type == "384-well":
+        for letter in "ABCDEFGHIJKLMNOP":
+            for number in range(1, 25):
+                output_list.append(letter + str(number))
+    else:
+        print("ERROR get_wellID_list: type not equal to 384 or 96. type is " + type)
+        return None
+
+    return output_list
+
+def move_copy_file_to(move_copy_mode, source_fp, dest_fp):
+
+    if move_copy_mode.lower() == "move":
+        shutil.move(src=source_fp, dst=dest_fp)
+        if not os.path.isfile(dest_fp):
+            raise customError("ERROR move_copy_file_to: Did not move " +  source_fp + " file to " + dest_fp)
+        print("Moved " + source_fp + " to " + dest_fp)
+        
+    elif move_copy_mode.lower() == "copy":
+        shutil.copy2(src=source_fp, dst=dest_fp)
+        if not os.path.isfile(dest_fp):
+            raise customError("ERROR move_copy_file_to: Did not copy " +  source_fp + " file to " + dest_fp)
+        print("Copied " + source_fp + " to " + dest_fp)
+    return dest_fp
+
+def send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder):
+    if not os.path.isdir(error_folder):
+        os.mkdir(error_folder)
+        if not os.path.isdir(error_folder):
+            raise customError("\nERROR organize_files: Could not generate error_folder: " + error_folder)
+        else:
+            dest = os.path.join(error_folder, tif_filename_w_ext)
+            print("\nERROR " + reason + ".   Moving " + tif_file + " to " + dest)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            return dest
+
+
+# ___________________________________________________________________________________________________________USER INTERFACE FUNCTIONS
+#*************************************************************************************************************
 def get_particle_analysis_settings(size_min, size_max, include_holes_checked, merge_mode):
     # Set parameter for pixel^2 size.
     # Get these into the same dialog box
@@ -341,17 +442,274 @@ def get_analysis_workflow():
             get_settings_strings(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory, print_settings=False)
             return step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory
 
-# ______________________________________________________________________________________ORGANIZATION FUNCTIONS
-#***************************************************************************************
+# ___________________________________________________________________________________________________________ORGANIZATION FUNCTIONS
+#*************************************************************************************************************
+    
+
+def batch_organize_files(directory, organization_settings):
+
+    organize_mode, move_copy, string1, string2, generate_log = organization_settings
+
+    moved_copied_list = [] # (Source, Destination) - only useful to reverse the operation
+    error_list = []
+
+    if not os.path.isdir(directory):
+        log.append("ERROR batch_organize_files: variable directory is not a directory")
+        raise customError("ERROR batch_organize_files: variable directory is not a directory")
+    
+
+    # Create the folder for the organized files to live in.
+    folder_name = os.path.dirname(directory)
+    organized_folder_path = os.path.join(directory, folder_name + "_auto-organized")
+    log.append("Creating directory: " + organized_folder_path)
+    os.mkdir(organized_folder_path)
+
+    if not os.path.isdir(organized_folder_path):
+        log.append("ERROR batch_organize_files: failed to create directory " + organized_folder_path)
+        raise customError("ERROR batch_organize_files: failed to create directory " + organized_folder_path)
+
+
+    # Create the string1 and string2 subfolders
+    organized_folder_path = add_path_backslash(organized_folder_path)
+    string1_folder = os.path.join(organized_folder_path + string1)
+    string2_folder = os.path.join(organized_folder_path + string2)
+    print("string1 folder: " + string1_folder)
+    print("string2 folder: " + string2_folder)
+    os.mkdir(string1_folder)
+    os.mkdir(string2_folder)
+    string1_folder = add_path_backslash(string1_folder)
+    string2_folder = add_path_backslash(string2_folder)
+    log.append("string1 folder: " + string1_folder)
+    log.append("string2 folder: " + string2_folder)
+
+    if not os.path.isdir(string1_folder):
+        log.append("ERROR batch_organize_files: failed to create string1 directory " + string1_folder)
+        raise customError("ERROR batch_organize_files: failed to create string1 directory " + string1_folder)
+
+    if not os.path.isdir(string2_folder):
+        log.append("ERROR batch_organize_files: failed to create string1 directory " + string2_folder)
+        raise customError("ERROR batch_organize_files: failed to create string2 directory " + string2_folder)
+
+    # Define the error folder's path - should it need to be created for use
+    error_folder = os.path.join(organized_folder_path + "Errors")
+    error_folder = add_path_backslash(error_folder)
+    print("error folder: " + error_folder)
+
+    # Get tif file list from the master folder
+    file_list = find_tif_files(directory)
+
+    # Determine the folder structure
+    well_id_list = get_wellID_list(organize_mode)
+    
+    # Create each wellID subfolder
+    for well_id in well_id_list:
+        # In string1's folder
+        well_id_folder_1 = os.path.join(string1_folder, well_id)
+        print("Generating well_id_folder_1: " + well_id_folder_1)
+        os.mkdir(well_id_folder_1)
+
+        # In string2's folder
+        well_id_folder_2 = os.path.join(string2_folder, well_id)
+        print("Generating well_id_folder_2: " + well_id_folder_2)
+        os.mkdir(well_id_folder_2)
+
+    # Organize each of the tif files
+    for tif_file in file_list:
+
+        tif_filename_w_ext = os.path.basename(tif_file)
+        print("batch_organize_files Organizing " + tif_file + "...")
+        wellid_from_filename = extract_well_id(tif_filename_w_ext)
+
+        # Test this new structure
+        # If string1 is found and the well ID matches
+        if string1 in tif_filename_w_ext and wellid_from_filename in well_id_list:
+            dest = os.path.join(string1_folder, wellid_from_filename, tif_filename_w_ext)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            print("\n" + move_copy + ": " + tif_file + " to " + dest)
+            moved_copied_list.append((tif_file, dest))
+
+        # If string2 is found and the Well ID matches
+        elif string2 in tif_filename_w_ext and wellid_from_filename in well_id_list:
+            dest = os.path.join(string2_folder, wellid_from_filename, tif_filename_w_ext)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            print("\n" + move_copy + ": " + tif_file + " to " + dest)
+            moved_copied_list.append((tif_file, dest))
         
-# ______________________________________________________________________________________AUTO THRESHOLDING FUNCTIONS
-#***************************************************************************************
+        # ERROR if the wellID is not found in the filename
+        elif extract_well_id(tif_filename_w_ext) == None:
+            reason = "Reason: Well ID not in tif filename: " + tif_file
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            log.append("ERROR batch_organize_files: " + reason)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
         
-# ______________________________________________________________________________________ANALYZE PARTICLES FUNCTIONS
-#***************************************************************************************
+        # ERROR if the wellID  is found but does not exist in the well_id_list (possibly chosen 96-well organize_mode instead of 384-well)
+        elif wellid_from_filename is not None and wellid_from_filename not in well_id_list:
+            log.append("ERROR: wellid_from_filename is not in well_id_list, wellid_from_filename: " + wellid_from_filename)
+            raise customError("ERROR: wellid_from_filename is not in well_id_list, wellid_from_filename: " + wellid_from_filename)
         
-# ______________________________________________________________________________________RETRIEVE SETTINGS
-#***************************************************************************************
+
+        # ERROR if both strings exists in the source tif filename
+        elif string1 in tif_filename_w_ext and string2 in tif_filename_w_ext:
+            reason = "Reason: both string1: " + string1 + " nor string2: " + string2 + " in tif filename"
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            log.append("ERROR batch_organize_files: " + reason)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+
+        # ERROR if neither string exists in the source tif filename
+        elif string1 not in tif_filename_w_ext and string2 not in tif_filename_w_ext:
+            reason = "Reason: neither string1: " + string1 + " nor string2: " + string2 + " in tif filename: " + tif_file
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            log.append("ERROR batch_organize_files: " + reason)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+    
+    file_list.remove(tif_file)
+
+    log.append(moved_copied_list)
+    
+    return moved_copied_list, error_list
+
+
+def organize_files(organize_mode, move_copy, string1, string2, master_folder_path):
+
+
+    # master_folder_path is the user-selected directory containing all of the tifs.
+        # master_folder_path + "_organized" will be the name of the organized folder.
+
+    # For error logging, file move operation reversal
+    moved_copied_list = [] # (Source, Destination) - only useful to reverse the operation
+    error_list = []
+
+    if not os.path.isdir(master_folder_path):
+        raise customError("ERROR organize_files: master_folder_path is not a directory")
+    
+
+    # Create the folder for the organized files to live in.
+    folder_name = os.path.dirname(master_folder_path)
+    organized_folder_path = os.path.join(master_folder_path, folder_name + "_auto-organized")
+    print(organized_folder_path)
+    os.mkdir(organized_folder_path)
+
+    if not os.path.isdir(organized_folder_path):
+        raise customError("ERROR organize_files: failed to create directory " + organized_folder_path)
+
+    # Create the string1 and string2 subfolders
+    organized_folder_path = add_path_backslash(organized_folder_path)
+    string1_folder = os.path.join(organized_folder_path + string1)
+    string2_folder = os.path.join(organized_folder_path + string2)
+    print("string1 folder: " + string1_folder)
+    print("string2 folder: " + string2_folder)
+    os.mkdir(string1_folder)
+    os.mkdir(string2_folder)
+    string1_folder = add_path_backslash(string1_folder)
+    string2_folder = add_path_backslash(string2_folder)
+
+    if not os.path.isdir(string1_folder):
+        raise customError("ERROR organize_files: failed to create string1 directory " + string1_folder)
+
+    if not os.path.isdir(string2_folder):
+        raise customError("ERROR organize_files: failed to create string2 directory " + string2_folder)
+
+    # Define the error folder's path - should it need to be created for use
+    error_folder = os.path.join(organized_folder_path + "Errors")
+    error_folder = add_path_backslash(error_folder)
+    print("error folder: " + error_folder)
+
+    # Get tif file list from the master folder (remember this is filtered for filesize)
+    file_list = find_tif_files(master_folder_path)
+
+    # Determine the folder structure
+    if organize_mode == "96-well":
+        well_id_list = get_wellID_list(96)
+    elif organize_mode == "384-well":
+        well_id_list = get_wellID_list(384)
+    
+    for well_id in well_id_list:
+        # In string1's folder
+        well_id_folder_1 = os.path.join(string1_folder, well_id)
+        print("Generating well_id_folder: " + well_id_folder_1)
+        os.mkdir(well_id_folder_1)
+
+        # In string2's folder
+        well_id_folder_2 = os.path.join(string2_folder, well_id)
+        print("Generating well_id_folder: " + well_id_folder_2)
+        os.mkdir(well_id_folder_2)
+
+
+    # Organize each of the tif files
+    for tif_file in file_list:
+
+        tif_filename_w_ext = os.path.basename(tif_file)
+        print("organize_files Organizing " + tif_file + "...")
+        wellid_from_filename = extract_well_id(tif_filename_w_ext)
+
+        # Test this new structure
+        # If string1 is found and the well ID matches
+        if string1 in tif_filename_w_ext and wellid_from_filename in well_id_list:
+            dest = os.path.join(string1_folder, wellid_from_filename, tif_filename_w_ext)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            print("\n" + move_copy + ": " + tif_file + " to " + dest)
+            moved_copied_list.append((tif_file, dest))
+
+        # If string2 is found and the Well ID matches
+        elif string2 in tif_filename_w_ext and wellid_from_filename in well_id_list:
+            dest = os.path.join(string2_folder, wellid_from_filename, tif_filename_w_ext)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            print("\n" + move_copy + ": " + tif_file + " to " + dest)
+            moved_copied_list.append((tif_file, dest))
+        
+        # ERROR if the wellID is not found in the filename
+        elif extract_well_id(tif_filename_w_ext) == None:
+            reason = "Reason: Well ID not in tif filename: " + tif_file
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+        
+        # ERROR if the wellID  is found but does not exist in the well_id_list (possibly chosen 96-well organize_mode instead of 384-well)
+        elif wellid_from_filename is not None and wellid_from_filename not in well_id_list:
+            raise customError("ERROR: wellid_from_filename is not in well_id_list, wellid_from_filename: " + wellid_from_filename)
+
+        # ERROR if both strings exists in the source tif filename
+        elif string1 in tif_filename_w_ext and string2 in tif_filename_w_ext:
+            reason = "Reason: both string1: " + string1 + " nor string2: " + string2 + " in tif filename"
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+
+        # ERROR if neither string exists in the source tif filename
+        elif string1 not in tif_filename_w_ext and string2 not in tif_filename_w_ext:
+            reason = "Reason: neither string1: " + string1 + " nor string2: " + string2 + " in tif filename"
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+
+
+    file_list.remove(tif_file)
+    return moved_copied_list, error_list
+        
+# ___________________________________________________________________________________________________________AUTO THRESHOLDING FUNCTIONS
+#*************************************************************************************************************
+
+def batch_auto_threshold(directory, filelist, thresholding_settings):
+    setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images = thresholding_settings
+# ___________________________________________________________________________________________________________ANALYZE PARTICLES FUNCTIONS
+#*************************************************************************************************************
+
+def batch_analyze_particles(directory, filelist, analysis_settings):
+    size_min, size_max, include_holes_checked, merge_mode = analysis_settings
+
+
+# ___________________________________________________________________________________________________________RETRIEVE SETTINGS
+#*************************************************************************************************************
+
+log = RunLog()
+log.append("Starting analysis")
+log.append(("Generated runlog: " + log.run_log_fp))
+
+exit()
+
 full_workflow_settings = get_analysis_workflow()
 # Print out the settings
 if full_workflow_settings != "cancelled":
@@ -396,9 +754,41 @@ if full_workflow_settings != "cancelled":
 
 
 
+# Main goes here
+
+
+
+
+
+
+print("Run Log filepath:" + log.run_log_fp)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # def organize_script(organize_mode, move_copy, string1, string2, generate_log):
-#         # ______________________________________________________________________________________FILE ORGANIZATION
-#     #***************************************************************************************
+#         # ___________________________________________________________________________________________________________FILE ORGANIZATION
+#     #****************************************************************************************************************
     
 #     # Make empty filelist so that it can be assigned if files are organized
 #     # Filelist will otherwise default to the tif files in the user-selected directory (dir)
