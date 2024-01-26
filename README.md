@@ -18,7 +18,7 @@ Clone or download this repository. That's it.<br />
 Use Pip to install Pandas (optional, see Notes above)<br />
 
 ## Usage:
-Place all of your .tif files to be analyzed into a folder/directory. Each .tif file must be named according to the following syntax in order to be  recognized by the auto-organization and sorted by the CSV merger module:
+ - Place all of your .tif files to be analyzed into a folder/directory. Each .tif file must be named according to the following syntax in order to be recognized by the auto-organization and sorted by the CSV merger module:
     - String1_WellID_otherInfo_captureNumberInteger
     - e.g. BrightField_A3_1_006
     - e.g. TdTomato_B7_1_007
