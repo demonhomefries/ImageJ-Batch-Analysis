@@ -2,15 +2,116 @@ import os
 import time
 import Queue
 import shutil
-import subprocess
+import datetime
 import threading
+import subprocess
 from ij import IJ
 from ij.io import OpenDialog
 from ij.gui import GenericDialog
 from java.awt.event import ActionListener
 
-# ______________________________________________________________________________________USER INTERFACE FUNCTIONS
-#***************************************************************************************
+# ___________________________________________________________________________________________________________SUPPLEMENTARY FUNCTIONS AND CLASSES
+#*************************************************************************************************************
+
+class customError(Exception):
+    pass
+
+class RunLog:
+    def __init__(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Get current date and time
+        current_datetime = datetime.datetime.now()
+        #date_str = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
+        date_str = current_datetime.strftime("%d%b%Y_%H%M").upper()
+        # File name
+        file_name = "ImageJ_Analysis_RUNLOG_on_" + date_str + ".txt"
+        self.run_log_fp = os.path.join(script_dir, file_name)
+
+    def append(self, log_string):
+        # Append log string to the file
+        with open(self.run_log_fp, 'a') as file:
+            file.write(log_string + '\n')
+
+def add_path_backslash(directory):
+    # This function just adds a backslash because apparently os.path.join doesn't add strings as new folders, just concatenates them into the basename/basedir.
+    if not directory.endswith("\\"):
+        directory = directory + "\\"
+    return directory
+
+def extract_well_id(filename):
+
+    # Split the filename using underscore as a delimiter (this naming convention should not change from the Gen5 output)
+    parts = filename.split('_')
+    
+    # Well ID is identified as a len >= 2 string where the first character is a number and subsequent characters are digits
+    for part in parts:
+        if len(part) >= 2 and part[0].isalpha() and part[1:].isdigit():
+            return part
+    
+    # If well_id is not found, return None to be processed as an error
+    return None
+
+def find_tif_files(directory):
+    tif_files = []
+
+    for root, dirs, files in os.walk(directory):
+        for filename in files:
+            if filename.endswith('.tif'):
+                tif_files.append(os.path.join(root, filename))
+
+    return tif_files
+
+def get_wellID_list(type):
+    """
+    type: "384-well" or "96-well"
+    
+    """
+
+    output_list = []
+
+    if type == "96-well":
+        for letter in "ABCDEFGH":
+            for number in range(1, 13):
+                output_list.append(letter + str(number))
+    elif type == "384-well":
+        for letter in "ABCDEFGHIJKLMNOP":
+            for number in range(1, 25):
+                output_list.append(letter + str(number))
+    else:
+        print("ERROR get_wellID_list: type not equal to 384 or 96. type is " + type)
+        return None
+
+    return output_list
+
+def move_copy_file_to(move_copy_mode, source_fp, dest_fp):
+
+    if move_copy_mode.lower() == "move":
+        shutil.move(src=source_fp, dst=dest_fp)
+        if not os.path.isfile(dest_fp):
+            raise customError("ERROR move_copy_file_to: Did not move " +  source_fp + " file to " + dest_fp)
+        print("Moved " + source_fp + " to " + dest_fp)
+        
+    elif move_copy_mode.lower() == "copy":
+        shutil.copy2(src=source_fp, dst=dest_fp)
+        if not os.path.isfile(dest_fp):
+            raise customError("ERROR move_copy_file_to: Did not copy " +  source_fp + " file to " + dest_fp)
+        print("Copied " + source_fp + " to " + dest_fp)
+    return dest_fp
+
+def send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder):
+    if not os.path.isdir(error_folder):
+        os.mkdir(error_folder)
+        if not os.path.isdir(error_folder):
+            raise customError("\nERROR organize_files: Could not generate error_folder: " + error_folder)
+        else:
+            dest = os.path.join(error_folder, tif_filename_w_ext)
+            print("\nERROR " + reason + ".   Moving " + tif_file + " to " + dest)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            return dest
+
+
+# ___________________________________________________________________________________________________________USER INTERFACE FUNCTIONS
+#*************************************************************************************************************
 def get_particle_analysis_settings(size_min, size_max, include_holes_checked, merge_mode):
     # Set parameter for pixel^2 size.
     # Get these into the same dialog box
@@ -148,16 +249,16 @@ def get_organization_settings(organize_mode, move_copy, string1, string2, genera
     
     if gd.wasCanceled():
         print("get_organization_settings was cancelled, restoring default values")
-        return "384-well", "Move", "Confocal", "Brightfield", False
+        return "384-well", "Copy", "Confocal", "BrightField", False
     else:
         return organize_mode, move_copy, string1, string2, generate_log
     
 class OrganizationSettingsListener(ActionListener):
     def __init__(self):
         organize_mode = "384-well"
-        move_copy = "Move"
+        move_copy = "Copy"
         string1 = "Confocal"
-        string2 = "Brightfield"
+        string2 = "BrightField"
         generate_log = False
         self.organization_settings = organize_mode, move_copy, string1, string2, generate_log
 
@@ -181,7 +282,7 @@ def get_settings_strings(step_list, organization_settings, thresholding_settings
             + "\n       Auto-threshold?: " + str(threshold_yn2)
             + "\n       Analyze Particles?: " + str(analyze_particles_yn3))
 
-    if organization_settings is not None:
+    if tif_organization_yn1:
         organize_mode, move_copy, string1, string2, generate_log = organization_settings
         organization_settings_string = ("Organization Settings:"
                         + "\n       Organize Mode: " + str(organize_mode)
@@ -192,7 +293,7 @@ def get_settings_strings(step_list, organization_settings, thresholding_settings
     else:
         organization_settings_string = ("Organization Settings: None")
 
-    if thresholding_settings is not None:
+    if threshold_yn2:
         setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images = thresholding_settings
         thresholding_settings_string = ("Auto-threshold Settings:" 
                         + "\n       Thresholding Mode: " + threshold_mode 
@@ -204,7 +305,7 @@ def get_settings_strings(step_list, organization_settings, thresholding_settings
     else:
         thresholding_settings_string = ("Auto-threshold Settings: None")
 
-    if analysis_settings is not None:
+    if analyze_particles_yn3:
         size_min, size_max, include_holes_checked, merge_mode = analysis_settings
         analysis_settings_string = ("Analyze Particles Settings:"
                         + "\n       Minimum Size: " + size_min 
@@ -258,7 +359,8 @@ def get_analysis_workflow():
     threshListener = ThresholdingSettingsListener()
     analysisListener = AnalysisSettingsListener()
     # Set initial values for values retrieved directly from workflow dialog
-    directory = None
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    directory = script_dir
     tif_organization_yn1 = False
     threshold_yn2 = False
     analyze_particles_yn3 = False
@@ -341,54 +443,233 @@ def get_analysis_workflow():
             get_settings_strings(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory, print_settings=False)
             return step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory
 
-# ______________________________________________________________________________________ORGANIZATION FUNCTIONS
-#***************************************************************************************
-        
-# ______________________________________________________________________________________AUTO THRESHOLDING FUNCTIONS
-#***************************************************************************************
-        
-# ______________________________________________________________________________________ANALYZE PARTICLES FUNCTIONS
-#***************************************************************************************
-        
-# ______________________________________________________________________________________RETRIEVE SETTINGS
-#***************************************************************************************
-full_workflow_settings = get_analysis_workflow()
-# Print out the settings
-if full_workflow_settings != "cancelled":
-    step_list, organization_settings, thresholding_settings, analysis_settings, directory = full_workflow_settings
-    get_settings_strings(step_list, organization_settings, thresholding_settings, analysis_settings, directory, print_settings=True)
 
-    # Unpack the steps
+
+
+# ___________________________________________________________________________________________________________ORGANIZATION FUNCTIONS
+#*************************************************************************************************************
+    
+def batch_organize_files(directory, organization_settings):
+
+    organize_mode, move_copy, string1, string2, generate_log = organization_settings
+
+    moved_copied_list = [] # (Source, Destination) - only useful to reverse the operation
+    error_list = []
+
+    if not os.path.isdir(directory):
+        log.append("ERROR batch_organize_files: variable directory is not a directory")
+        raise customError("ERROR batch_organize_files: variable directory is not a directory")
+    
+
+    # Create the folder for the organized files to live in.
+    current_datetime = datetime.datetime.now()
+    date_str = current_datetime.strftime("%d%b%Y_%H%M").upper()
+    folder_name = os.path.dirname(directory)
+    organized_folder_path = os.path.join(directory, folder_name + "_auto-organized_on_" + date_str)
+
+    log.append("Creating directory: " + organized_folder_path)
+    os.mkdir(organized_folder_path)
+
+    if not os.path.isdir(organized_folder_path):
+        log.append("ERROR batch_organize_files: failed to create directory " + organized_folder_path)
+        raise customError("ERROR batch_organize_files: failed to create directory " + organized_folder_path)
+
+
+    # Create the string1 and string2 subfolders
+    organized_folder_path = add_path_backslash(organized_folder_path)
+    string1_folder = os.path.join(organized_folder_path + string1)
+    string2_folder = os.path.join(organized_folder_path + string2)
+    print("string1 folder: " + string1_folder)
+    print("string2 folder: " + string2_folder)
+    os.mkdir(string1_folder)
+    os.mkdir(string2_folder)
+    string1_folder = add_path_backslash(string1_folder)
+    string2_folder = add_path_backslash(string2_folder)
+    log.append("string1 folder: " + string1_folder)
+    log.append("string2 folder: " + string2_folder)
+
+    if not os.path.isdir(string1_folder):
+        log.append("ERROR batch_organize_files: failed to create string1 directory " + string1_folder)
+        raise customError("ERROR batch_organize_files: failed to create string1 directory " + string1_folder)
+
+    if not os.path.isdir(string2_folder):
+        log.append("ERROR batch_organize_files: failed to create string1 directory " + string2_folder)
+        raise customError("ERROR batch_organize_files: failed to create string2 directory " + string2_folder)
+
+    # Define the error folder's path - should it need to be created for use
+    error_folder = os.path.join(organized_folder_path + "Errors")
+    error_folder = add_path_backslash(error_folder)
+    print("error folder: " + error_folder)
+
+    # Get tif file list from the master folder
+    file_list = find_tif_files(directory)
+
+    # Determine the folder structure
+    well_id_list = get_wellID_list(organize_mode)
+    
+    # Create each wellID subfolder
+    for well_id in well_id_list:
+        # In string1's folder
+        well_id_folder_1 = os.path.join(string1_folder, well_id)
+        print("Generating well_id_folder_1: " + well_id_folder_1)
+        os.mkdir(well_id_folder_1)
+
+        # In string2's folder
+        well_id_folder_2 = os.path.join(string2_folder, well_id)
+        print("Generating well_id_folder_2: " + well_id_folder_2)
+        os.mkdir(well_id_folder_2)
+
+    # Organize each of the tif files
+    for tif_file in file_list:
+
+        tif_filename_w_ext = os.path.basename(tif_file)
+        print("batch_organize_files Organizing " + tif_file + "...")
+        wellid_from_filename = extract_well_id(tif_filename_w_ext)
+
+        # If string1 is found and the well ID matches
+        if string1 in tif_filename_w_ext and wellid_from_filename in well_id_list:
+            dest = os.path.join(string1_folder, wellid_from_filename, tif_filename_w_ext)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            print("\n" + move_copy + ": " + tif_file + " to " + dest)
+            moved_copied_list.append((tif_file, dest))
+
+        # If string2 is found and the Well ID matches
+        elif string2 in tif_filename_w_ext and wellid_from_filename in well_id_list:
+            dest = os.path.join(string2_folder, wellid_from_filename, tif_filename_w_ext)
+            move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
+            print("\n" + move_copy + ": " + tif_file + " to " + dest)
+            moved_copied_list.append((tif_file, dest))
+        
+        # ERROR if the wellID is not found in the filename
+        elif extract_well_id(tif_filename_w_ext) == None:
+            reason = "Reason: Well ID not in tif filename: " + tif_file
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            log.append("ERROR batch_organize_files: " + reason)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+            # raise customError("ERROR batch_organize_files: " + reason)
+        
+        # ERROR if the wellID is found but does not exist in the well_id_list (possibly chosen 96-well organize_mode instead of 384-well)
+        elif wellid_from_filename is not None and wellid_from_filename not in well_id_list:
+            log.append("ERROR batch_organize_files: wellid_from_filename is not in well_id_list, wellid_from_filename: " + wellid_from_filename)
+            raise customError("ERROR batch_organize_files: wellid_from_filename is not in well_id_list, wellid_from_filename: " + wellid_from_filename)
+        
+
+        # ERROR if both strings exists in the source tif filename
+        elif string1 in tif_filename_w_ext and string2 in tif_filename_w_ext:
+            reason = "Reason: both string1: " + string1 + " nor string2: " + string2 + " in tif filename"
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            log.append("ERROR batch_organize_files: " + reason)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+            # warning_dialog("ERROR batch_organize_files: " + reason)
+
+        # ERROR if neither string exists in the source tif filename
+        elif string1 not in tif_filename_w_ext and string2 not in tif_filename_w_ext:
+            reason = "Reason: neither string1: " + string1 + " nor string2: " + string2 + " in tif filename: " + tif_file
+            dest = send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_folder)
+            log.append("ERROR batch_organize_files: " + reason)
+            error_list.append((tif_file, reason))
+            moved_copied_list.append((tif_file, dest))
+            # warning_dialog("ERROR batch_organize_files: " + reason)
+
+    file_list.remove(tif_file)
+    file_list = [destination_fp for source_fp, destination_fp in moved_copied_list]
+
+    if generate_log is True:
+        log.append("AUTO ORGANIZATION FILE TRANSACTIONS: ")
+        for source_fp, destination_fp in moved_copied_list:
+            log.append((move_copy + " from " + source_fp + " to " + destination_fp))
+    
+    return file_list, organized_folder_path
+     
+
+
+
+# ___________________________________________________________________________________________________________AUTO THRESHOLDING FUNCTIONS
+#*************************************************************************************************************
+
+def batch_auto_threshold(file_list, directory, thresholding_settings):
+    setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images = thresholding_settings
+
+
+
+
+# ___________________________________________________________________________________________________________ANALYZE PARTICLES FUNCTIONS
+#*************************************************************************************************************
+
+def batch_analyze_particles(file_list, directory, analysis_settings):
+    size_min, size_max, include_holes_checked, merge_mode = analysis_settings
+
+
+
+
+# ___________________________________________________________________________________________________________RETRIEVE SETTINGS
+#*************************************************************************************************************
+
+log = RunLog()
+log.append("Starting analysis")
+log.append(("Generated runlog: " + log.run_log_fp))
+
+
+full_workflow_settings = get_analysis_workflow()
+
+# Print out the settings and initiate the workflow functions
+if full_workflow_settings != "cancelled":
+
+    # Unpack the settings for each step
+    step_list, organization_settings, thresholding_settings, analysis_settings, directory = full_workflow_settings
+    # Unpack the chosen steps
     organize_tif_bool, auto_threshold_bool, analyze_particles_bool= step_list
+    # Get the settings formatted for printing
+    step_list_string, organization_settings_string, thresholding_settings_string, analysis_settings_string, directory_string = get_settings_strings(step_list, organization_settings, thresholding_settings, analysis_settings, directory, print_settings=True)
+
+    # Write the settings to the log
+    log.append("**********************USER-INPUT ANALYSIS WORKFLOW SETTINGS:**********************")
+    log.append(step_list_string)
+    log.append(organization_settings_string)
+    log.append(thresholding_settings_string)
+    log.append(analysis_settings_string)
+    log.append(directory_string + "\n\n")
 
     # Unpack Organization Settings
     if organize_tif_bool:
-        organize_mode, move_copy, string1, string2, generate_log = organization_settings
-        print("ORGANIZATION SETTINGS DEBUG:")
-        print("\torganize_mode: " + str(organize_mode))
-        print("\tmove_copy: " + str(move_copy))
-        print("\tstring1: " + str(string1))
-        print("\tstring2: " + str(string2))
-        print("\tgenerate_log: " + str(generate_log))
+        log.append("**********************STARTING FILE ORGANIZATION**********************")
+        print(organization_settings_string)
+        print("Target Directory: " + directory)
+        
+        file_list, directory = batch_organize_files(directory, organization_settings)
+
+        print(len(file_list))
+        print(directory)
+        log.append("**********************ORGANIZATION COMPLETE**********************\n\n")
+        print("**********************ORGANIZATION COMPLETE**********************")
 
     # Unpack Thresholding Settings
     if auto_threshold_bool:
+        log.append("**********************STARTING THRESHOLDING**********************")
         setting, threshold_mode, dark_bg, stack_hist, rst_range, save_thresholded_images = thresholding_settings
-        print("AUTO THRESHOLD SETTINGS DEBUG:")
-        print("\tsetting: " + str(setting))
-        print("\tthreshold_mode: " + str(threshold_mode))
-        print("\tdark_bg: " + str(dark_bg))
-        print("\tstack_hist: " + str(stack_hist))
-        print("\trst_range: " + str(rst_range))
-        print("\tsave_thresholded_images: " + str(save_thresholded_images))
+        print(thresholding_settings_string)
+        print("Target Directory: " + directory)
+
+        # INSERT FUNCTION HERE
+        # file_list, directory = batch_auto_threshold(filelist, directory, thresholding_settings)
+
+        log.append("**********************THRESHOLDING COMPLETE**********************\n\n")
+        print("**********************THRESHOLDING COMPLETE**********************")
 
     # Unpack Analysis Settings
     if analyze_particles_bool:
-        
+        log.append("**********************STARTING ANALYZE PARTICLES**********************")
         size_min, size_max, include_holes_checked, merge_mode = analysis_settings
-        print("ANALYZE PARTICLES SETTINGS DEBUG:")
-        print("\tsize_min: " + str(size_min))
-        print("\tsize_max: " + str(size_max))
-        print("\tinclude_holes_checked: " + str(include_holes_checked))
-        print("\tmerge_mode: " + str(merge_mode))
+        print(thresholding_settings_string)
+        print("Target Directory: " + directory)
 
+        # INSERT FUNCTION HERE
+        # file_list, directory = batch_analyze_particles(filelist, directory, analysis_settings)
+
+        log.append("**********************ANALYZE PARTICLES COMPLETE**********************\n\n")
+        print("**********************ANALYZE PARTICLES COMPLETE**********************")
+
+
+print("MAIN COMPLETE")
