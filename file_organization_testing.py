@@ -220,7 +220,6 @@ def send_to_error_folder(move_copy, tif_file, tif_filename_w_ext, reason, error_
             move_copy_file_to(move_copy_mode=move_copy, source_fp=tif_file, dest_fp=dest)
             return dest
 
-
 # ___________________________________________________________________________________________________________USER INTERFACE FUNCTIONS
 #*************************************************************************************************************
 def get_particle_analysis_settings(size_min, size_max, include_holes_checked, merge_mode):
@@ -576,9 +575,6 @@ def get_analysis_workflow():
             get_settings_strings(step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory, output_csv_dir, print_settings=False)
             return step_list, orgListener.organization_settings, threshListener.thresholding_settings, analysisListener.analysis_settings, directory, output_csv_dir
 
-
-
-
 # ___________________________________________________________________________________________________________ORGANIZATION FUNCTIONS
 #*************************************************************************************************************
     
@@ -716,12 +712,8 @@ def batch_organize_files(directory, organization_settings):
     
     return file_list, organized_folder_path
 
-
-
-
 # ___________________________________________________________________________________________________________AUTO THRESHOLDING FUNCTIONS
 #*************************************************************************************************************
-
 
 def auto_threshold_image(threshold_setting, tif_file):
     # Open the file
@@ -878,7 +870,6 @@ def batch_analyze_particles(file_list, directory, analysis_settings):
 
     return output_csv_list, directory
 
-
 # ___________________________________________________________________________________________________________SINGLE THRESHOLD AND ANALYZE PARTICLES
 #*************************************************************************************************************
 
@@ -948,9 +939,9 @@ def single_threshold_and_analyze(file_list, directory, thresholding_settings, an
 
     return output_csv_list, directory
 
-
 # ___________________________________________________________________________________________________________SINGLE THRESHOLD AND ANALYZE PARTICLES
 #*************************************************************************************************************
+
 def call_csv_merge(file_list, directory, merge_mode, csv_merger_script_fp, merged_csv_output_fp):
 
     # Get the tif files from the directory if a file_list has not been created from a previous process.
@@ -961,6 +952,10 @@ def call_csv_merge(file_list, directory, merge_mode, csv_merger_script_fp, merge
 
     # Add all of the files to merge into a file and pass that .txt file's path onto the CSV_Merge.py
     filelist_txt_fp = os.path.join(os.path.dirname(csv_merger_script_fp), "Files_to_merge.txt")
+    # Delete the old one if it exists:
+    if os.path.isfile(filelist_txt_fp):
+        os.remove(filelist_txt_fp)
+    # Create the file and populate
     for file_path in file_list:
         with open(filelist_txt_fp, "a") as write_file:
             write_file.write(file_path + "\n")
@@ -974,6 +969,7 @@ def call_csv_merge(file_list, directory, merge_mode, csv_merger_script_fp, merge
     # # Put the arguments in quotes so any spaces in the filepaths will not confuse argparse
     csv_merger_script_fp = "\"" + csv_merger_script_fp + "\""
     # csv_list_argument =  "\"" + csv_list_argument + "\""
+    output_csv_fp = merged_csv_output_fp
     merged_csv_output_fp =  "\"" + merged_csv_output_fp + "\""
     command = "python " + csv_merger_script_fp + " --outputPath " + merged_csv_output_fp + " --CSVlist " + str(filelist_txt_fp) + " --mergeMode " + merge_mode
     
@@ -985,11 +981,14 @@ def call_csv_merge(file_list, directory, merge_mode, csv_merger_script_fp, merge
     output_message = output_message.decode('utf-8')
     log.append(output_message, printout=True)
 
-    if os.path.isfile(merged_csv_output_fp):
-        return merged_csv_output_fp
-    else:
-        customError("ERROR call_csv_merge: was not able to find merged_csv_output_fp after generation: " + merged_csv_output_fp)
+    os.remove(filelist_txt_fp)
+    log.append("Deleted " + filelist_txt_fp, printout=True)
 
+    log.append("DEBUGGING merged_csv_output_fp: " + merged_csv_output_fp, printout=True)
+    if not os.path.isfile(output_csv_fp) or output_csv_fp is None:
+        raise customError("ERROR call_csv_merge: was not able to find merged_csv_output_fp after generation: " + merged_csv_output_fp)
+    else:
+        return output_csv_fp
 
 # ___________________________________________________________________________________________________________RETRIEVE SETTINGS AND RUN MAIN
 #*************************************************************************************************************
@@ -1078,26 +1077,29 @@ if full_workflow_settings != "cancelled":
         log.append("**********************ANALYZE PARTICLES COMPLETE**********************\n\n", printout=True)
 
 
-        # MERGING
-        if merge_mode != "Don't merge":
-            if merge_mode == "Horizontal merge":
-                merge_mode = "0"
-            if merge_mode == "Vertical merge (Spotfire)":
-                merge_mode = "1"
+    # MERGING
+        
+    merged_csv_output_fp = "Merge was not completed"
 
-            log.append("**********************STARTING MERGE CSV**********************\n\n", printout=True)
-            merge_script_fp = get_csv_merger_py_path()
-            
-            # Get formatted date and time
-            timestr = formattedtime()
-            current_datetime = timestr.get_time_str()
+    if merge_mode != "Don't merge":
+        if merge_mode == "Horizontal merge":
+            merge_mode = "0"
+        if merge_mode == "Vertical merge (Spotfire)":
+            merge_mode = "1"
 
-            merged_csv_output_fp = os.path.join(merged_csv_output_dir, "Merged_output_on_" + current_datetime + ".csv")
-            merged_csv_output_fp = call_csv_merge(file_list, directory, merge_mode, merge_script_fp, merged_csv_output_fp)
-            log.append("**********************MERGE CSV COMPLETE**********************\n\n", printout=True)
-            log.append("\nProcess completed, Merged CSV output: " + str(merged_csv_output_fp), printout=True)
-        else:
-            log.append("merge_mode was \'Don't merge\', skipping merge...", printout=True)
+        log.append("**********************STARTING MERGE CSV**********************\n\n", printout=True)
+        merge_script_fp = get_csv_merger_py_path()
+        
+        # Get formatted date and time
+        timestr = formattedtime()
+        current_datetime = timestr.get_time_str()
+
+        merged_csv_output_fp = os.path.join(merged_csv_output_dir, "Merged_output_on_" + current_datetime + ".csv")
+        final_output_csv_fp = call_csv_merge(file_list, directory, merge_mode, merge_script_fp, merged_csv_output_fp)
+        log.append("**********************MERGE CSV COMPLETE**********************\n\n", printout=True)
+        log.append("\nProcess completed, Merged CSV output: " + str(merged_csv_output_fp), printout=True)
+    else:
+        log.append("merge_mode was \'Don't merge\', skipping merge...", printout=True)
 
 print("\n\n\nRun Log filepath: " + str(log.run_log_fp))
 print("Merged CSV output: " + str(merged_csv_output_fp))
