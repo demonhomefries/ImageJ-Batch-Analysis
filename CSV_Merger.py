@@ -72,10 +72,25 @@ if __name__ == "__main__":
     parser.add_argument("--mergeMode", required=True, type=str, help="How the final merged output columns are grouped together. Horizontal append - 0, Vertical append - 1")
     args = parser.parse_args()
 
-    # Grab the CSV list string and replace the quotation marks
+    print("*****************CSV_Merger.py STARTING*****************")
+    # Grab the CSV list string and convert it back into a list of filepaths
     csv_file_string = args.CSVlist
-    csv_file_string.replace("\"", "")
-    csv_file_list = csv_file_string.split(",")
+    csv_file_fp = csv_file_string.replace("\"", "")
+    if not os.path.isfile(csv_file_string):
+        print("ERROR CSV_Merger: does not exist: " + csv_file_fp)
+    
+    csv_file_list = []
+    # Open the file and read line by line
+    with open(csv_file_fp, 'r') as file:
+        for line in file:
+            # Remove whitespace
+            line = line.strip()
+            # Validate the file
+            if os.path.exists(line):
+                csv_file_list.append(line)
+            else:
+                print("ERROR CSV_Merger: does not exist: " + line)
+
 
     # Grab the output filepath string and replace the quotation marks
     output_file_path = args.outputPath
@@ -89,10 +104,10 @@ if __name__ == "__main__":
     print(f"csv_file_list: {csv_file_list}")
     print(f"output_file_path: {output_file_path}")
 
-    print(csv_file_list)
-    for file in csv_file_list:
-        print(file)
-    print(output_file_path)
+    #print(csv_file_list)
+    #for file in csv_file_list:
+        #print(file)
+    #print(output_file_path)
 
     sort_list = []
     for file in csv_file_list:
@@ -104,18 +119,21 @@ if __name__ == "__main__":
     # Extract the first element (string) from each tuple to get a sorted list of strings
     sorted_files = [file[0] for file in sorted_list]
 
+    output_basename = os.path.basename(output_file_path)
+
     for file in sorted_files:
-        print(f"Starting merge for {file}")
+        print(f"Starting to merge {file}...")
         if merge_mode == "0":
             merge_columns_horizontally(file, output_file_path)
         elif merge_mode == "1":
             merge_columns_vertically(file, output_file_path)
-        print(f"Successfully completed merge!")
+        print(f"Successfully merged {os.path.basename(file)} into {output_basename}")
 
     print("All CSVs merged Successfully!")
 
-    print("\n____________________CSVs Generated:____________________")
+    print("\n____________________CSVs Merged:____________________")
     for file in csv_file_list:
         print(file)
     print("\n____________________Merged Output:____________________")
     print(output_file_path)
+    print("*****************CSV_Merger.py FINISHED*****************\n\n")
