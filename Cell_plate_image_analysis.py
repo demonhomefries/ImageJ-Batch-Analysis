@@ -731,6 +731,11 @@ def auto_threshold_image(threshold_setting, tif_file):
         log.append("ERROR auto_threshold_image: " + tif_file + " is a stack, skipping...", printout=True)
         exit()
 
+    # Set the image to pixels before thresholding
+    imp.getCalibration().setXUnit("pixel")
+    imp.getCalibration().setXUnit("pixel")
+    IJ.run(imp, "Properties...", "channels=1 slices=1 frames=1 pixel_width=1 pixel_height=1 voxel_depth=1")
+    # Autothreshold the image
     IJ.run(imp, "8-bit", "")
     IJ.setAutoThreshold(imp, threshold_setting)
     IJ.run(imp, "Convert to Mask", "")
@@ -881,17 +886,17 @@ def single_threshold_and_analyze(file_list, directory, thresholding_settings, an
     # Get the tif files from the directory if a file_list has not been created from a previous process.
     if file_list is None or len(file_list) < 1:
         file_list = find_tif_files(directory)
-        log.append("single_threshold_and_analyze did not receive a file_list, defaulting to directory: " + directory, printout=True)
-        log.append("Found " + str(len(file_list)) + " files in " + directory, printout=True)
+        print("single_threshold_and_analyze did not receive a file_list, defaulting to directory: " + directory)
+        print("Found " + str(len(file_list)) + " files in " + directory)
 
 
     for index, tif_file in enumerate(file_list):
 
         # Validate the file as existing and quit if not
         if not os.path.isfile(tif_file):
-            log.append("ERROR: " + tif_file + " could not be found/does not exist. Skipping...", printout=True)
+            print("ERROR: " + tif_file + " could not be found/does not exist. Skipping...")
             continue
-
+        
         # Generate inputs/outputs
         tif_filename_w_ext = os.path.basename(tif_file)
         tif_filename_wo_ext = os.path.splitext(tif_filename_w_ext)[0]
@@ -906,13 +911,20 @@ def single_threshold_and_analyze(file_list, directory, thresholding_settings, an
 
         # Validate that the file is not a stack
         if check_if_stack(imp, tif_file):
-            log.append("ERROR single_threshold_and_analyze: " + tif_filename_w_ext + " is a stack, skipping...", printout=True)
+            print("ERROR single_threshold_and_analyze: " + tif_filename_w_ext + " is a stack, skipping...")
             continue
-
+        
+        # Set the image to pixels before thresholding
+        imp.getCalibration().setXUnit("pixel")
+        imp.getCalibration().setXUnit("pixel")
+        IJ.run(imp, "Properties...", "channels=1 slices=1 frames=1 pixel_width=1 pixel_height=1 voxel_depth=1")
         # Threshold the image
         IJ.run(imp, "8-bit", "")
         IJ.setAutoThreshold(imp, threshold_setting)
         IJ.run(imp, "Convert to Mask", "")
+
+
+
         
         # # Determine and save the file to the output path
         # output_path = os.path.join(tif_basedir, tif_filename_wo_ext  + "_auto-thresholded.tif")
@@ -930,10 +942,10 @@ def single_threshold_and_analyze(file_list, directory, thresholding_settings, an
         IJ.saveAs("Results", output_csv)
 
         if os.path.isfile(output_csv):
-            log.append("Completed Analyzing Particles for " + tif_filename_w_ext + " Output CSV:" + output_csv + "", printout=True)
+            print("Completed Analyzing Particles for " + tif_filename_w_ext + " Output CSV:" + output_csv + "")
             output_csv_list.append(output_csv)
         else:
-            log.append("Process ran, but did not produce output CSV for " + tif_filename_wo_ext, printout=True)
+            print("Process ran, but did not produce output CSV for " + tif_filename_wo_ext)
 
         imp.close()
 
