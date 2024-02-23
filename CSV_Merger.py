@@ -123,8 +123,11 @@ def sortby_rows(csv_file_list, ascending_descending):
     sort_dict = {}
     # Assign the values to the dictionary
     for file in csv_file_list:
+        basename_wo_ext = os.path.basename(file).split(".")[0]
         file_wellID = extract_well_id(os.path.basename(file))
-        sequenceID = extract_sequence_id(file, "_")
+        sequenceID = extract_sequence_id(basename_wo_ext, "_")
+        if sequenceID is None:
+            print(f"ERROR sortby_rows: Could not find sequence ID from {file}")
         #print(file_wellID + " " + sequenceID)
 
         # Initialize the nested dictionary if it doesn't exist
@@ -378,7 +381,7 @@ if __name__ == "__main__":
         if sum_setting == "false":
             output_message = merge_columns_vertically(csv_file_list, output_file_path)
 
-    if output_message is not "ok":
+    if output_message != "ok":
         print("ERROR: Something went wrong with the merge. Merge function failed.")
 
 
