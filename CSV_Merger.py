@@ -90,8 +90,9 @@ def sortby_columns(csv_file_list, ascending_descending):
     sort_dict = {}
     # Assign the values to the dictionary
     for file in csv_file_list:
+        basename_wo_ext = os.path.basename(file).split(".")[0]
         file_wellID = extract_well_id(os.path.basename(file))
-        sequenceID = extract_sequence_id(file, "_")
+        sequenceID = extract_sequence_id(basename_wo_ext, "_")
         #print(file_wellID + " " + sequenceID)
 
         # Initialize the nested dictionary if it doesn't exist
