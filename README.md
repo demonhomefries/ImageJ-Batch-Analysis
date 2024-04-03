@@ -9,7 +9,7 @@ Batch processing script to organize and analyze images from a cell plate imager 
     - File transactions (source, destination) filepaths if moved or copied
     - Errors encountered during the run
 - Auto-thresholding is a multi-threaded operation and will run by default using the half of the available thread count.
-- Image files MUST follow this naming convention for script-compatibility:<br />
+- Image files MUST follow this Gen5 naming convention from the C10 for script-compatibility:<br />
 <WELL>_<READ_STEP_SEQUENCE>_<CHANNEL_INDEX>_<IMAGE_IN_WELL_INDEX>_<CHANNEL>_<READ_INDEX>.tif<br />
 Example: A1_01_1_1_DAPI_001.tif<br />
 
