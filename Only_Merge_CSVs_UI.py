@@ -219,7 +219,6 @@ def convert_to_command(mergemode_setting, sortby_setting, order_setting, sum_set
     # parser.add_argument("--orderSetting", required=False, type=str, help="\'descending\' - A1 > P24 \'ascending\' - P24 > A1")
     # parser.add_argument("--sumValues", required=False, type=str, help="\'true\' to sum the \'Area\' values from each tif analyzed in the output CSV, otherwise \'false\'")
 
-    # reorder this shit bruh
     command = invokation_command + directory_command + output_command + mergemode_command + sortby_command + order_command + sum_command
     return command, filelist_txt_fp
 
